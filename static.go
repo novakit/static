@@ -27,6 +27,8 @@ type ResponseWriterWrapper struct {
 	TempHeader http.Header
 	// Blocked if wrapper is blocked
 	Blocked bool
+	// HeaderWritten if header is already written
+	HeaderWritter bool
 }
 
 // Header returns the temporary header
@@ -36,6 +38,11 @@ func (r *ResponseWriterWrapper) Header() http.Header {
 
 // WriteHeader override http.ResponseWriter
 func (r *ResponseWriterWrapper) WriteHeader(statusCode int) {
+	if r.HeaderWritter {
+		return
+	}
+	r.HeaderWritter = true
+
 	if statusCode == http.StatusForbidden || statusCode == http.StatusNotFound {
 		r.Blocked = true
 		return
@@ -50,6 +57,9 @@ func (r *ResponseWriterWrapper) WriteHeader(statusCode int) {
 
 // Write override http.ResponseWriter
 func (r *ResponseWriterWrapper) Write(p []byte) (int, error) {
+	if !r.HeaderWritter {
+		r.WriteHeader(http.StatusOK)
+	}
 	if r.Blocked {
 		return len(p), nil
 	}
