@@ -18,7 +18,7 @@ func TestStatic_BinFS(t *testing.T) {
 		BinFS:     true,
 	}))
 	n.Use(func(c *nova.Context) error {
-		c.Res.Write([]byte("NOT FOUND"))
+		c.Res.Write([]byte("NOT FOUND" + c.Req.URL.Path))
 		return nil
 	})
 	req, _ := http.NewRequest(http.MethodGet, "/static/dir2/dir21/file212.js", nil)
@@ -28,12 +28,11 @@ func TestStatic_BinFS(t *testing.T) {
 	if !bytes.Equal(res.Bytes(), binfs0e2b285092f29e6844cf004e91ee596a4f392d82.Data) {
 		t.Error("request failed 1", res.String())
 	}
-	// should fallback to next handler
+	// should pass through without modifying request.URL
 	req, _ = http.NewRequest(http.MethodGet, "/static/dir2/dir21/file212.notexist.js", nil)
 	res = testkit.NewDummyResponse()
 	n.ServeHTTP(res, req)
-	// should serve file
-	if res.String() != "NOT FOUND" {
+	if res.String() != "NOT FOUND/static/dir2/dir21/file212.notexist.js" {
 		t.Error("request failed 2", res.String())
 	}
 }
@@ -45,7 +44,7 @@ func TestStatic_Dir(t *testing.T) {
 		Directory: "testdata",
 	}))
 	n.Use(func(c *nova.Context) error {
-		c.Res.Write([]byte("NOT FOUND"))
+		c.Res.Write([]byte("NOT FOUND" + c.Req.URL.Path))
 		return nil
 	})
 	req, _ := http.NewRequest(http.MethodGet, "/static/dir2/dir21/file212.js", nil)
@@ -59,8 +58,8 @@ func TestStatic_Dir(t *testing.T) {
 	req, _ = http.NewRequest(http.MethodGet, "/static/dir2/dir21/file212.notexist.js", nil)
 	res = testkit.NewDummyResponse()
 	n.ServeHTTP(res, req)
-	// should serve file
-	if res.String() != "NOT FOUND" {
+	// should pass through without modifying request.URL
+	if res.String() != "NOT FOUND/static/dir2/dir21/file212.notexist.js" {
 		t.Error("request failed 2", res.String())
 	}
 }
