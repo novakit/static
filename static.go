@@ -73,6 +73,9 @@ func sanitizeOptions(opts ...Options) (opt Options) {
 	if len(opt.Directory) == 0 {
 		opt.Directory = os.Getenv("WEBROOT")
 	}
+	if len(opt.Directory) == 0 {
+		opt.Directory = "public"
+	}
 	return
 }
 
