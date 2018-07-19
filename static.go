@@ -1,10 +1,14 @@
 package static // import "github.com/novakit/static"
 
 import (
+	"io"
+	"mime"
 	"net/http"
-	"net/url"
 	"os"
+	"path"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/novakit/binfs"
 	"github.com/novakit/nova"
@@ -20,52 +24,6 @@ type Options struct {
 	BinFS bool
 }
 
-// ResponseWriterWrapper wrapper of http.ResponseWriter, blocks Write() if 404 or 403
-type ResponseWriterWrapper struct {
-	http.ResponseWriter
-	// TempHeader temporary header
-	TempHeader http.Header
-	// Blocked if wrapper is blocked
-	Blocked bool
-	// HeaderWritten if header is already written
-	HeaderWritter bool
-}
-
-// Header returns the temporary header
-func (r *ResponseWriterWrapper) Header() http.Header {
-	return r.TempHeader
-}
-
-// WriteHeader override http.ResponseWriter
-func (r *ResponseWriterWrapper) WriteHeader(statusCode int) {
-	if r.HeaderWritter {
-		return
-	}
-	r.HeaderWritter = true
-
-	if statusCode == http.StatusForbidden || statusCode == http.StatusNotFound {
-		r.Blocked = true
-		return
-	}
-	// write back Header
-	for k, v := range r.TempHeader {
-		r.ResponseWriter.Header()[k] = v
-	}
-	// invoke original response writer
-	r.ResponseWriter.WriteHeader(statusCode)
-}
-
-// Write override http.ResponseWriter
-func (r *ResponseWriterWrapper) Write(p []byte) (int, error) {
-	if !r.HeaderWritter {
-		r.WriteHeader(http.StatusOK)
-	}
-	if r.Blocked {
-		return len(p), nil
-	}
-	return r.ResponseWriter.Write(p)
-}
-
 func sanitizeOptions(opts ...Options) (opt Options) {
 	if len(opts) > 0 {
 		opt = opts[0]
@@ -75,6 +33,20 @@ func sanitizeOptions(opts ...Options) (opt Options) {
 	}
 	if len(opt.Directory) == 0 {
 		opt.Directory = "public"
+	}
+	return
+}
+
+func buildFileSystem(opt Options) (fs http.FileSystem) {
+	if opt.BinFS {
+		c := strings.Split(opt.Directory, "/")
+		n := binfs.Find(c...)
+		if n == nil {
+			panic("directory not find in binfs")
+		}
+		fs = n.FileSystem()
+	} else {
+		fs = http.Dir(opt.Directory)
 	}
 	return
 }
@@ -95,64 +67,92 @@ func trimPathPrefix(pfx string, path string) (ret string, ok bool) {
 	return
 }
 
-func cloneRequest(r *http.Request) *http.Request {
-	r2 := new(http.Request)
-	*r2 = *r
-	// Deep copy the URL because it isn't
-	// a map and the URL is mutable by users
-	// of WithContext.
-	if r.URL != nil {
-		r2URL := new(url.URL)
-		*r2URL = *r.URL
-		r2.URL = r2URL
+func setContentType(stat os.FileInfo, res http.ResponseWriter) {
+	mt := mime.TypeByExtension(path.Ext(stat.Name()))
+	if len(mt) > 0 {
+		res.Header().Set("Content-Type", mt)
 	}
-	return r2
 }
 
-func buildFileServer(opt Options) http.Handler {
-	var fs http.Handler
-	if opt.BinFS {
-		c := strings.Split(opt.Directory, "/")
-		n := binfs.Find(c...)
-		if n == nil {
-			panic("directory not find in binfs")
-		}
-		fs = http.FileServer(n.FileSystem())
-	} else {
-		fs = http.FileServer(http.Dir(opt.Directory))
-	}
-	return fs
+func setContentLength(stat os.FileInfo, res http.ResponseWriter) {
+	res.Header().Set("Content-Length", strconv.FormatInt(stat.Size(), 10))
+}
+
+func setLastModified(stat os.FileInfo, res http.ResponseWriter) {
+	res.Header().Set("Last-Modified", stat.ModTime().Format(http.TimeFormat))
 }
 
 // Handler create a nova.HandlerFunc
 func Handler(opts ...Options) nova.HandlerFunc {
 	opt := sanitizeOptions(opts...)
-	fs := buildFileServer(opt)
+	fs := buildFileSystem(opt)
 	return func(c *nova.Context) (err error) {
 		// must be GET/HEAD method
 		if c.Req.Method != http.MethodGet && c.Req.Method != http.MethodHead {
 			c.Next()
 			return
 		}
-		// validate and trim prefix
-		var req = c.Req
+
+		// trim and validate prefix path
+		fsPath := path.Clean(c.Req.URL.Path)
 		if len(opt.Prefix) > 0 {
-			if p, ok := trimPathPrefix(opt.Prefix, req.URL.Path); ok {
-				// clone request and update URL.Path
-				req = cloneRequest(req)
-				req.URL.Path = p
-			} else {
-				// skip if prefix mismatch
+			var ok bool
+			if fsPath, ok = trimPathPrefix(opt.Prefix, fsPath); !ok {
 				c.Next()
 				return
 			}
 		}
-		// invoke http.FileServer with a wrapped http.ResponseWriter
-		res := &ResponseWriterWrapper{ResponseWriter: c.Res, TempHeader: http.Header{}}
-		fs.ServeHTTP(res, req)
-		// if blocked (404 or 403), c.Res is untouched, invoke next handler
-		if res.Blocked {
+
+		// open file
+		var file http.File
+		if file, err = fs.Open(fsPath); err != nil {
+			// bypass 404, 403
+			if os.IsNotExist(err) || os.IsPermission(err) {
+				err = nil
+				c.Next()
+			}
+			return
+		}
+		defer file.Close()
+
+		// stat file
+		var stat os.FileInfo
+		if stat, err = file.Stat(); err != nil {
+			return
+		}
+
+		// skip dir
+		if stat.IsDir() {
 			c.Next()
+			return
+		}
+
+		// set content-type/content-length/last-modified
+		setContentType(stat, c.Res)
+		setContentLength(stat, c.Res)
+		setLastModified(stat, c.Res)
+
+		// check if-modified-since
+		nma := c.Req.Header.Get("If-Modified-Since")
+		if len(nma) > 0 {
+			var t time.Time
+			if t, err = http.ParseTime(nma); err != nil {
+				// ignore error, continue sending file
+				err = nil
+			} else {
+				if !stat.ModTime().After(t) {
+					c.Res.WriteHeader(http.StatusNotModified)
+					return
+				}
+			}
+		}
+
+		// send 200
+		c.Res.WriteHeader(http.StatusOK)
+
+		// send body if GET
+		if c.Req.Method == http.MethodGet {
+			_, err = io.Copy(c.Res, file)
 		}
 		return
 	}
