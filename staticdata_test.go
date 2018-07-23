@@ -21,6 +21,13 @@ var (
 			0x09, 0x23, 0xb4, 0x52, 0xfe, 0x46, 0xb3, 0x56, 0x20, 0xf3, 0x9e, 0xf7, 0x10, 0x09, 0x39, 0xa7, 0x41, 0x1a, 0x28, 0xe0, 0xb5, 0x15, 0x05, 0xc6, 0x44, 0x1a, 0xc1, 0x24, 0xa2,
 		},
 	}
+	binfs4f9a993c2ae5cfcfd698da51d05bc646a2ed571b = binfs.Chunk{
+		Path: []string{"testdata", "dir1", "index.html"},
+		Date: time.Unix(1532365624, 0),
+		Data: []byte{
+			0x68, 0x65, 0x6c, 0x6c, 0x6f,
+		},
+	}
 	binfs27eb33aa5a1b7a64299273ff6027f009c3a18834 = binfs.Chunk{
 		Path: []string{"testdata", "dir2", "dir21", "file211.css"},
 		Date: time.Unix(1530781608, 0),
@@ -322,6 +329,7 @@ var (
 
 func init() {
 	binfs.Load(&binfs030a408a7fdbbd59e73047ff1cb5814ebe4c9617)
+	binfs.Load(&binfs4f9a993c2ae5cfcfd698da51d05bc646a2ed571b)
 	binfs.Load(&binfs27eb33aa5a1b7a64299273ff6027f009c3a18834)
 	binfs.Load(&binfs0e2b285092f29e6844cf004e91ee596a4f392d82)
 	binfs.Load(&binfs74f5d6c8374e3fd7b64b671831fd78cc42d064c5)

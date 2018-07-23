@@ -63,3 +63,23 @@ func TestStatic_Dir(t *testing.T) {
 		t.Error("request failed 2", res.String())
 	}
 }
+
+func TestStatic_DirWithIndex(t *testing.T) {
+	n := nova.New()
+	n.Use(static.Handler(static.Options{
+		Prefix:    "static",
+		Directory: "testdata",
+		Index:     true,
+	}))
+	n.Use(func(c *nova.Context) error {
+		c.Res.Write([]byte("NOT FOUND" + c.Req.URL.Path))
+		return nil
+	})
+	req, _ := http.NewRequest(http.MethodGet, "/static/dir1", nil)
+	res := testkit.NewDummyResponse()
+	n.ServeHTTP(res, req)
+	// should serve file
+	if !bytes.Equal(res.Bytes(), binfs4f9a993c2ae5cfcfd698da51d05bc646a2ed571b.Data) {
+		t.Error("request failed 1", res.String())
+	}
+}

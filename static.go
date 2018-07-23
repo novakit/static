@@ -22,6 +22,8 @@ type Options struct {
 	Directory string
 	// BinFS using binfs, not suggested with WEBROOT envvar
 	BinFS bool
+	// Index serving index.html
+	Index bool
 }
 
 func sanitizeOptions(opts ...Options) (opt Options) {
@@ -93,6 +95,9 @@ func Handler(opts ...Options) nova.HandlerFunc {
 			return
 		}
 
+		// index fixed flag
+		var indexRewriteTried bool
+
 		// trim and validate prefix path
 		fsPath := path.Clean(c.Req.URL.Path)
 		if len(opt.Prefix) > 0 {
@@ -104,6 +109,7 @@ func Handler(opts ...Options) nova.HandlerFunc {
 		}
 
 		// open file
+	OPEN:
 		var file http.File
 		if file, err = fs.Open(fsPath); err != nil {
 			// bypass 404, 403
@@ -123,8 +129,19 @@ func Handler(opts ...Options) nova.HandlerFunc {
 
 		// skip dir
 		if stat.IsDir() {
-			c.Next()
-			return
+			if opt.Index && !indexRewriteTried {
+				// set index fixed mark to true, prevent loop
+				indexRewriteTried = true
+				// close the dir
+				file.Close()
+				// change fs path
+				fsPath = path.Join(fsPath, "index.html")
+				// goto open
+				goto OPEN
+			} else {
+				c.Next()
+				return
+			}
 		}
 
 		// set content-type/content-length/last-modified
